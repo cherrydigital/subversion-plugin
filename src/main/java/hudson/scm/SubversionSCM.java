@@ -74,22 +74,11 @@ import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
 import java.security.cert.CertificateException;
 
-import hudson.model.AbstractBuild;
-import hudson.model.AbstractDescribableImpl;
-import hudson.model.AbstractProject;
-import hudson.model.Descriptor;
-import hudson.model.Item;
-import hudson.model.ItemGroup;
-import hudson.model.Job;
-import hudson.model.JobProperty;
-import hudson.model.ModelObject;
-import hudson.model.Node;
-import hudson.model.ParameterDefinition;
-import hudson.model.ParameterValue;
-import hudson.model.ParametersAction;
-import hudson.model.ParametersDefinitionProperty;
-import hudson.model.Run;
-import hudson.model.TaskListener;
+import hudson.model.*;
+import hudson.scm.subversion.condition.AlwaysCheckout;
+import hudson.scm.subversion.condition.CheckoutCondition;
+import hudson.scm.subversion.condition.NeverCheckout;
+import hudson.scm.subversion.condition.StringsMatchCondition;
 import hudson.security.ACL;
 import hudson.security.ACLContext;
 import hudson.security.Permission;
@@ -277,6 +266,7 @@ public class SubversionSCM extends SCM {
 
     private static final transient SecureRandom RANDOM = new SecureRandom();
 
+
     /**
      * @deprecated as of 1.286
      */
@@ -290,7 +280,7 @@ public class SubversionSCM extends SCM {
      */
     public SubversionSCM(String[] remoteLocations, String[] localLocations,
                          boolean useUpdate, SubversionRepositoryBrowser browser, String excludedRegions) {
-        this(ModuleLocation.parse(remoteLocations,localLocations,null,null), useUpdate, false, browser, excludedRegions, null, null, null);
+        this(ModuleLocation.parse(remoteLocations,localLocations,null,null, null, null), useUpdate, false, browser, excludedRegions, null, null, null);
     }
 
     /**
@@ -298,7 +288,7 @@ public class SubversionSCM extends SCM {
      */
      public SubversionSCM(String[] remoteLocations, String[] localLocations,
                          boolean useUpdate, SubversionRepositoryBrowser browser, String excludedRegions, String excludedUsers, String excludedRevprop) {
-        this(ModuleLocation.parse(remoteLocations,localLocations,null,null), useUpdate, false, browser, excludedRegions, excludedUsers, excludedRevprop, null);
+        this(ModuleLocation.parse(remoteLocations,localLocations,null,null, null, null), useUpdate, false, browser, excludedRegions, excludedUsers, excludedRevprop, null);
     }
 
    /**
@@ -495,6 +485,25 @@ public class SubversionSCM extends SCM {
         return new UpdateUpdater();
     }
 
+    /**
+     * Author: KIKIM
+     *
+     * @return
+     */
+    public List<? extends Descriptor<? extends CheckoutCondition>> getCheckoutConditions() {
+        return CheckoutCondition.all();
+    }
+
+    /**
+     * Author: KIKIM
+     *
+     * @return
+     */
+    public CheckoutCondition.CheckoutConditionDescriptor getDefaultCheckoutCondition() {
+        return Hudson.getInstance().getDescriptorByType(AlwaysCheckout.AlwaysCheckoutDescriptor.class);
+    }
+
+
     public void setWorkspaceUpdater(WorkspaceUpdater workspaceUpdater) {
         this.workspaceUpdater = workspaceUpdater;
     }
@@ -507,6 +516,61 @@ public class SubversionSCM extends SCM {
      */
     public ModuleLocation[] getLocations(AbstractBuild<?,?> build) {
         return getLocations(null, build);
+    }
+
+
+    /**
+     * Authro: KIKIM, check if checkoutConditions met.
+     * @param env
+     * @param build
+     * @return
+     */
+    private ModuleLocation[] getActiveLocations(EnvVars env, Run<?,?> build) {
+        ModuleLocation[] moduleLocations = getLocations( env, build);
+        List<ModuleLocation> moduleLocationList = new ArrayList<>();
+
+        for(ModuleLocation moduleLocation: moduleLocations) {
+            CheckoutCondition checkoutCondition = moduleLocation.getCheckoutCondition();
+            // If env is null, tt's not building state, so return all module locations configured by user.
+            if(env == null) {
+                moduleLocationList.add(moduleLocation);
+            }
+            else {
+                if(checkoutCondition instanceof AlwaysCheckout) {
+                    LOGGER.info("url:+ " + moduleLocation.getURL() + " AlwaysCheckout.");
+                    moduleLocationList.add(moduleLocation);
+                }
+                else if(checkoutCondition instanceof NeverCheckout) {
+                    LOGGER.info("url:+ " + moduleLocation.getURL() + " NeverCheckout.");
+                }
+                else if(checkoutCondition instanceof StringsMatchCondition) {
+                    LOGGER.info("url:+ " + moduleLocation.getURL() + " StringsMatchCondition.");
+                    StringsMatchCondition stringsMatchCondition = (StringsMatchCondition)checkoutCondition;
+                    LOGGER.info("arg1:" + stringsMatchCondition.getArg1() + " arg2:" + stringsMatchCondition.getArg2() + " isIgnoreCase:" + stringsMatchCondition.isIgnoreCase());
+
+                    boolean isIgnoreCase = stringsMatchCondition.isIgnoreCase();
+                    String expArg1 = env.expand(stringsMatchCondition.getArg1());
+                    String expArg2 = env.expand(stringsMatchCondition.getArg2());
+                    LOGGER.info("expArg1:" + expArg1 + " expArg2:" + expArg2);
+
+                    if(!isIgnoreCase) {
+                        if(expArg1.equals(expArg2)) {
+                            moduleLocationList.add(moduleLocation);
+                        }
+                    }
+                    else {
+                        if(expArg1.toLowerCase().equals(expArg2.toLowerCase())) {
+                            moduleLocationList.add(moduleLocation);
+                        }
+                    }
+
+                }
+            }
+
+        }
+
+        return moduleLocationList.toArray(new ModuleLocation[0]);
+//        return moduleLocations;
     }
 
     /**
@@ -534,6 +598,7 @@ public class SubversionSCM extends SCM {
             locations = oldLocations.toArray(new ModuleLocation[0]);
             modules = null;
         }
+
 
         if(env == null && build == null)
             return locations;
@@ -590,6 +655,7 @@ public class SubversionSCM extends SCM {
                 }
             }
         }
+
         return projectExternals;
     }
 
@@ -870,7 +936,6 @@ public class SubversionSCM extends SCM {
         return revisions;
     }
 
-    
 
     /**
      * Polling can happen on the master and does not require a workspace.
@@ -885,9 +950,11 @@ public class SubversionSCM extends SCM {
     @SuppressWarnings("unchecked")
     public void checkout(Run build, Launcher launcher, FilePath workspace, final TaskListener listener, File changelogFile, SCMRevisionState baseline) throws IOException, InterruptedException {
         EnvVars env = build.getEnvironment(listener);
+
         if (build instanceof AbstractBuild) {
             EnvVarsUtils.overrideAll(env, ((AbstractBuild) build).getBuildVariables());
         }
+
 
         Map<String, List<External>> externalsMap = checkout(build,workspace,listener,env);
 
@@ -945,6 +1012,8 @@ public class SubversionSCM extends SCM {
      */
     @SuppressFBWarnings(value = "NP_NULL_ON_SOME_PATH", justification = "TODO needs triage")
     private Map<String, List<External>> checkout(Run build, FilePath workspace, TaskListener listener, EnvVars env) throws IOException, InterruptedException {
+
+
         if (repositoryLocationsNoLongerExist(build, listener, env)) {
             Run lsb = build.getParent().getLastSuccessfulBuild();
             if (build instanceof AbstractBuild && lsb != null && build.getNumber()-lsb.getNumber()>10
@@ -964,7 +1033,10 @@ public class SubversionSCM extends SCM {
         Map<String, List<External>> externalsMap = new HashMap<>();
 
         Set<String> unauthenticatedRealms = new LinkedHashSet<>();
-        for (ModuleLocation location : getLocations(env, build)) {
+        // Changed from getLocations to getActiveLocations, to fit checkoutCondition.
+        for (ModuleLocation location : getActiveLocations(env, build)) {
+
+
             CheckOutTask checkOutTask =
                     new CheckOutTask(new CheckOutUpdateTask(build, this, location, build.getTimestamp().getTime(), listener, env, quietOperation));
             List<External> externals = new ArrayList<>(workspace.act(checkOutTask));
@@ -2756,6 +2828,9 @@ public class SubversionSCM extends SCM {
         @Exported
         public boolean cancelProcessOnExternalsFail;
 
+        @Exported
+        private CheckoutCondition checkoutCondition;
+
         /**
          * Cache of the repository UUID.
          */
@@ -2767,7 +2842,7 @@ public class SubversionSCM extends SCM {
          */
         @Deprecated
         public ModuleLocation(String remote, String local) {
-            this(remote, null, local, null, false, false);
+            this(remote, null, local, null, false,null);
         }
 
         /**
@@ -2782,50 +2857,51 @@ public class SubversionSCM extends SCM {
          */
         @Deprecated
         public ModuleLocation(String remote, String local, String depthOption, boolean ignoreExternalsOption) {
-            this(remote,null,local,depthOption,ignoreExternalsOption, false);
+            this(remote,null,local,depthOption,ignoreExternalsOption, null);
         }
 
         /**
          * Constructor to support backwards compatibility.
          */
         @Deprecated
-        public ModuleLocation(String remote, String credentialsId, String local, String depthOption, boolean ignoreExternalsOption) {
-          this(remote,credentialsId,local,depthOption,ignoreExternalsOption, false);
+        public ModuleLocation(String remote, String credentialsId, String local, String depthOption, boolean ignoreExternalsOption, CheckoutCondition checkoutCondition) {
+          this(remote,credentialsId,local,depthOption,ignoreExternalsOption, false, checkoutCondition);
         }
 
         @DataBoundConstructor
         public ModuleLocation(String remote, String credentialsId, String local, String depthOption, boolean ignoreExternalsOption,
-                              boolean cancelProcessOnExternalsFail) {
+                              boolean cancelProcessOnExternalsFail, CheckoutCondition checkoutCondition) {
             this.remote = Util.removeTrailingSlash(Util.fixNull(remote).trim());
             this.credentialsId = credentialsId;
             this.local = fixEmptyAndTrim(local);
             this.depthOption = StringUtils.isEmpty(depthOption) ? SVNDepth.INFINITY.getName() : depthOption;
             this.ignoreExternalsOption = ignoreExternalsOption;
             this.cancelProcessOnExternalsFail = cancelProcessOnExternalsFail;
+            this.checkoutCondition = checkoutCondition;
         }
 
         public ModuleLocation withRemote(String remote) {
-            return new ModuleLocation(remote, credentialsId, local, depthOption, ignoreExternalsOption, cancelProcessOnExternalsFail);
+            return new ModuleLocation(remote, credentialsId, local, depthOption, ignoreExternalsOption, cancelProcessOnExternalsFail, checkoutCondition);
         }
 
         public ModuleLocation withCredentialsId(String credentialsId) {
-            return new ModuleLocation(remote, credentialsId, local, depthOption, ignoreExternalsOption, cancelProcessOnExternalsFail);
+            return new ModuleLocation(remote, credentialsId, local, depthOption, ignoreExternalsOption, cancelProcessOnExternalsFail, checkoutCondition);
         }
 
         public ModuleLocation withLocal(String local) {
-            return new ModuleLocation(remote, credentialsId, local, depthOption, ignoreExternalsOption, cancelProcessOnExternalsFail);
+            return new ModuleLocation(remote, credentialsId, local, depthOption, ignoreExternalsOption, cancelProcessOnExternalsFail, checkoutCondition);
         }
 
         public ModuleLocation withDepthOption(String depthOption) {
-            return new ModuleLocation(remote, credentialsId, local, depthOption, ignoreExternalsOption, cancelProcessOnExternalsFail);
+            return new ModuleLocation(remote, credentialsId, local, depthOption, ignoreExternalsOption, cancelProcessOnExternalsFail, checkoutCondition);
         }
 
         public ModuleLocation withIgnoreExternalsOption(boolean ignoreExternalsOption) {
-            return new ModuleLocation(remote, credentialsId, local, depthOption, ignoreExternalsOption, cancelProcessOnExternalsFail);
+            return new ModuleLocation(remote, credentialsId, local, depthOption, ignoreExternalsOption, cancelProcessOnExternalsFail, checkoutCondition);
         }
 
         public ModuleLocation withCancelProcessOnExternalsFailed(boolean cancelProcessOnExternalsFailed) {
-          return new ModuleLocation(remote, credentialsId, local, depthOption, ignoreExternalsOption, cancelProcessOnExternalsFailed);
+          return new ModuleLocation(remote, credentialsId, local, depthOption, ignoreExternalsOption, cancelProcessOnExternalsFailed, checkoutCondition);
         }
 
         /**
@@ -2989,6 +3065,7 @@ public class SubversionSCM extends SCM {
             return depthOption;
         }
 
+
         /**
          * Returns {@link org.tmatesoft.svn.core.SVNDepth} by string value.
          *
@@ -3083,7 +3160,7 @@ public class SubversionSCM extends SCM {
          */
         public ModuleLocation getExpandedLocation(EnvVars env) {
             return new ModuleLocation(env.expand(remote), credentialsId, env.expand(getLocalDir()), getDepthOption(),
-                    isIgnoreExternalsOption(), isCancelProcessOnExternalsFail());
+                    isIgnoreExternalsOption(), isCancelProcessOnExternalsFail(), checkoutCondition);
         }
 
         @Override
@@ -3094,18 +3171,18 @@ public class SubversionSCM extends SCM {
         private static final long serialVersionUID = 1L;
 
         @Deprecated
-        public static List<ModuleLocation> parse(String[] remoteLocations, String[] localLocations, String[] depthOptions, boolean[] isIgnoreExternals) {
-            return parse(remoteLocations, null, localLocations, depthOptions, isIgnoreExternals, null);
+        public static List<ModuleLocation> parse(String[] remoteLocations, String[] localLocations, String[] depthOptions, boolean[] isIgnoreExternals, CheckoutCondition[] checkoutConditions) {
+            return parse(remoteLocations, null, localLocations, depthOptions, isIgnoreExternals, null, checkoutConditions);
         }
 
         @Deprecated
-        public static List<ModuleLocation> parse(String[] remoteLocations, String[] credentialIds, String[] localLocations, String[] depthOptions, boolean[] isIgnoreExternals) {
-          return parse(remoteLocations, credentialIds, localLocations, depthOptions, isIgnoreExternals, null);
+        public static List<ModuleLocation> parse(String[] remoteLocations, String[] credentialIds, String[] localLocations, String[] depthOptions, boolean[] isIgnoreExternals, CheckoutCondition[] checkoutConditions) {
+          return parse(remoteLocations, credentialIds, localLocations, depthOptions, isIgnoreExternals, null, checkoutConditions);
         }
 
         public static List<ModuleLocation> parse(String[] remoteLocations, String[] credentialIds,
                                                  String[] localLocations, String[] depthOptions,
-                                                 boolean[] isIgnoreExternals, boolean[] cancelProcessOnExternalsFails) {
+                                                 boolean[] isIgnoreExternals, boolean[] cancelProcessOnExternalsFails, CheckoutCondition[] checkoutConditions) {
             List<ModuleLocation> modules = new ArrayList<>();
             if (remoteLocations != null && localLocations != null) {
                 int entries = Math.min(remoteLocations.length, localLocations.length);
@@ -3121,11 +3198,24 @@ public class SubversionSCM extends SCM {
                                 Util.nullify(localLocations[i]),
                             depthOptions != null ? depthOptions[i] : null,
                             isIgnoreExternals != null && isIgnoreExternals[i],
-                            cancelProcessOnExternalsFails != null && cancelProcessOnExternalsFails[i]));
+                            cancelProcessOnExternalsFails != null && cancelProcessOnExternalsFails[i],
+                            checkoutConditions != null? checkoutConditions[i]: null )
+
+                            );
                     }
                 }
             }
             return modules;
+        }
+
+
+        /**
+         * Author: KIKIM
+         *
+         * @return
+         */
+        public CheckoutCondition getCheckoutCondition() {
+            return checkoutCondition;
         }
 
         /**
@@ -3158,7 +3248,7 @@ public class SubversionSCM extends SCM {
             }
 
             return new ModuleLocation(returnURL, credentialsId, getLocalDir(), getDepthOption(), isIgnoreExternalsOption(),
-                isCancelProcessOnExternalsFail());
+                isCancelProcessOnExternalsFail(), getCheckoutCondition());
         }
 
         @Extension

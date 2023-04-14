@@ -18,6 +18,7 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 
+import hudson.scm.subversion.condition.AlwaysCheckout;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -57,7 +58,7 @@ public class SubversionSCMUnitTest {
         // GIVEN an scm with a single module location
         SubversionSCM scm = mockSCMForBuildEnvVars();
         
-        ModuleLocation[] singleLocation = new ModuleLocation[] {new ModuleLocation("/remotepath", null, "", null, false, false)};
+        ModuleLocation[] singleLocation = new ModuleLocation[] {new ModuleLocation("/remotepath", null, "", null, false, false, new AlwaysCheckout())};
         when(scm.getLocations(any(EnvVars.class), any(AbstractBuild.class))).thenReturn(singleLocation);
         
         Map<String, Long> revisions = new HashMap<>();

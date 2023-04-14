@@ -43,6 +43,8 @@ import hudson.scm.ChangeLogSet.Entry;
 import hudson.scm.SubversionSCM.ModuleLocation;
 import hudson.scm.browsers.Sventon;
 import hudson.scm.subversion.*;
+import hudson.scm.subversion.condition.AlwaysCheckout;
+import hudson.scm.subversion.condition.CheckoutCondition;
 import hudson.security.ACL;
 import hudson.security.ACLContext;
 import hudson.slaves.DumbSlave;
@@ -88,6 +90,8 @@ import static org.jvnet.hudson.test.recipes.PresetData.DataSet.ANONYMOUS_READONL
 public class SubversionSCMTest extends AbstractSubversionTest {
 
     private static final int LOG_LIMIT = 1000;
+
+    private static final CheckoutCondition[] checkoutConditions = {new AlwaysCheckout()};
 
     // in some tests we play authentication games with this repo
     String realm = "<http://subversion.tigris.org:80> CollabNet Subversion Repository";
@@ -916,8 +920,9 @@ public class SubversionSCMTest extends AbstractSubversionTest {
     public void excludedRegions() throws Exception {
 //        SLAVE_DEBUG_PORT = 8001;
         File repo = new CopyExisting(getClass().getResource("HUDSON-6030.zip")).allocate();
+
         SubversionSCM scm = new SubversionSCM(ModuleLocation.parse(new String[]{"file://" + repo.toURI().toURL().getPath()},
-                                                                   new String[]{"."}, null, null),
+                                                                   new String[]{"."}, null, null, checkoutConditions),
                                               new UpdateUpdater(), null, ".*/bar", "", "", "", "");
 
         FreeStyleProject p = r.createFreeStyleProject("testExcludedRegions");
@@ -950,7 +955,7 @@ public class SubversionSCMTest extends AbstractSubversionTest {
 //        SLAVE_DEBUG_PORT = 8001;
         File repo = new CopyExisting(getClass().getResource("HUDSON-6030.zip")).allocate();
         SubversionSCM scm = new SubversionSCM(ModuleLocation.parse(new String[]{"file://" + repo.toURI().toURL().getPath()},
-                                                                   new String[]{"."}, null, null),
+                                                                   new String[]{"."}, null, null, checkoutConditions),
                                               new UpdateUpdater(), null, "", "", "", "", ".*/foo");
 
         FreeStyleProject p = r.createFreeStyleProject("testExcludedRegions");
@@ -985,7 +990,7 @@ public class SubversionSCMTest extends AbstractSubversionTest {
             ExecutionException {
           File repo = new CopyExisting(getClass().getResource("JENKINS-10449.zip")).allocate();
           SubversionSCM scm = new SubversionSCM(ModuleLocation.parse(new String[]{"file://" + repo.toURI().toURL().getPath()},
-                                                                     new String[]{"."},null,null),
+                                                                     new String[]{"."},null,null, checkoutConditions),
                                                 new UpdateUpdater(), null, "/z.*", "", "", "", "", false, shouldFilterLog, null);
 
           FreeStyleProject p = r.createFreeStyleProject(String.format("testFilterChangelog-%s", shouldFilterLog));
